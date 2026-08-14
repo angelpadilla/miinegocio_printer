@@ -150,183 +150,127 @@ El ticket muestra los artículos en una tabla de 4 columnas:
 
 ---
 
-## 💎 Ejemplos de uso
+## 💎 Ejemplos de integración desde la Web
 
-### Ruby on Rails con `Faraday`
+> ⚠️ **Importante:** La petición `POST` debe realizarse desde el **navegador del usuario (JavaScript)** hacia `http://127.0.0.1:9876/print`, ya que la impresora física y la aplicación *Miinegocio Printer* residen localmente en la computadora del cajero/usuario, no en el servidor.
 
-```ruby
-# Gemfile
-gem "faraday"
+---
 
-# config/initializers/printer_bridge.rb
-module PrinterBridge
-  URL = "http://127.0.0.1:9876/print"
+### 1. Ruby on Rails 8 (Hotwire + Stimulus)
 
-  def self.print_ticket(store_name:, items:, total:, subtotal: nil, iva: nil,
-                         text_lines_before_items: [], text_lines_after_items: [],
-                         logo_url: nil, barcode: nil)
-    conn = Faraday.new(url: URL) do |f|
-      f.request :json
-      f.adapter Faraday.default_adapter
-    end
-
-    payload = { store_name: store_name, items: items, total: total }
-    payload[:logo_url] = logo_url if logo_url
-    payload[:text_lines_before_items] = text_lines_before_items if text_lines_before_items.any?
-    payload[:subtotal] = subtotal if subtotal
-    payload[:iva] = iva if iva
-    payload[:text_lines_after_items] = text_lines_after_items if text_lines_after_items.any?
-    payload[:barcode] = barcode if barcode
-
-    response = conn.post { |req| req.body = payload }
-    { success: response.status == 200, message: response.body }
-  rescue Faraday::ConnectionFailed
-    { success: false, message: "El puente no está activo." }
-  end
-end
-
-# Uso desde un controlador Rails
-class VentasController < ApplicationController
-  def create
-    @venta = Venta.new(venta_params)
-    if @venta.save
-      PrinterBridge.print_ticket(
-        store_name: current_user.negocio.nombre,
-        logo_url: current_user.negocio.logo_url,
-        text_lines_before_items: [
-          { label: "RFC: ", label_bold: true, value: current_user.negocio.rfc,
-            value_bold: true, alignment: "space_between" }
-        ],
-        items: @venta.productos.map { |p|
-          { name: p.nombre, price: p.precio.to_f, qty: p.cantidad.to_i }
-        },
-        subtotal: @venta.subtotal.to_f, iva: @venta.iva.to_f,
-        total: @venta.total.to_f,
-        text_lines_after_items: [
-          { label: "¡Gracias por su compra!", alignment: "center", font_size: 14 }
-        ],
-        barcode: { type: "qr", value: ticket_url(@venta) }
-      )
-      redirect_to @venta, notice: "Venta registrada. Ticket enviado a impresión."
-    else
-      render :new, status: :unprocessable_entity
-    end
-  end
-end
-```
-
-### Con `Net::HTTP` (Ruby puro)
-
-### Con `fetch` desde JavaScript
-
+**Controlador Stimulus:**
 ```javascript
 // app/javascript/controllers/printer_controller.js
 import { Controller } from "@hotwired/stimulus";
 
 export default class extends Controller {
-  async print() {
-    const ticket = JSON.parse(this.element.dataset.ticket);
+  static values = {
+    ticket: Object,
+  };
 
+  async print() {
     try {
       const response = await fetch("http://127.0.0.1:9876/print", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(ticket),
+        body: JSON.stringify(this.ticketValue),
       });
 
       if (response.ok) {
-        alert("🧾 Ticket impreso");
+        alert("🧾 Ticket impreso con éxito");
       } else {
-        alert("❌ " + (await response.text()));
+        const errorText = await response.text();
+        alert(`❌ Error al imprimir: ${errorText}`);
       }
     } catch (err) {
-      alert("⚠️ El puente de impresión no está activo. Abre Miinegocio Printer.");
+      alert("⚠️ No se pudo conectar con el puente de impresión. Asegúrate de tener abierta la aplicación Miinegocio Printer.");
     }
   }
 }
 ```
 
+**Vista ERB (Rails):**
 ```erb
 <%# app/views/ventas/show.html.erb %>
-<button data-controller="printer"
-        data-action="click->printer#print"
-        data-ticket="<%= {
-          store_name: @venta.negocio.nombre,
-          logo_url: @venta.negocio.logo_url,
-          text_lines_before_items: [
-            { label: 'RFC: ', label_bold: true, value: @venta.negocio.rfc,
-              value_bold: true, alignment: 'space_between' }
-          ],
-          items: @venta.productos.map { |p|
-            { name: p.nombre, price: p.precio.to_f, qty: p.cantidad.to_i }
-          },
-          subtotal: @venta.subtotal.to_f,
-          iva: @venta.iva.to_f,
-          total: @venta.total.to_f,
-          text_lines_after_items: [
-            { label: '¡Gracias por su compra!', alignment: 'center', font_size: 14 }
-          ],
-          barcode: { type: 'qr', value: ticket_url(@venta) }
-        }.to_json %>">
+<% ticket_data = {
+  store_name: @venta.negocio.nombre,
+  logo_url: @venta.negocio.logo_url,
+  text_lines_before_items: [
+    { label: "RFC: ", label_bold: true, value: @venta.negocio.rfc, value_bold: true, alignment: "space_between" },
+    { label: "Folio: ", value: "##{@venta.id}", alignment: "space_between" }
+  ],
+  items: @venta.productos.map { |p|
+    { name: p.nombre, price: p.precio.to_f, qty: p.cantidad.to_f }
+  },
+  subtotal: @venta.subtotal.to_f,
+  iva: @venta.iva.to_f,
+  total: @venta.total.to_f,
+  text_lines_after_items: [
+    { label: "Forma de pago: ", value: @venta.metodo_pago, alignment: "space_between" },
+    { label: "¡Gracias por su compra!", alignment: "center", font_size: 14 }
+  ],
+  barcode: { type: "qr", value: ticket_url(@venta) }
+} %>
+
+<button
+  data-controller="printer"
+  data-action="click->printer#print"
+  data-printer-ticket-value="<%= ticket_data.to_json %>"
+  class="btn btn-primary"
+>
   🧾 Imprimir Ticket
 </button>
 ```
 
-### Ruby puro con `Net::HTTP`
+---
 
-```ruby
-require 'net/http'
-require 'json'
+### 2. JavaScript Vanilla / Fetch
 
-def imprimir_ticket(venta)
-  uri = URI("http://127.0.0.1:9876/print")
+```javascript
+async function imprimirTicket(ticketData) {
+  try {
+    const response = await fetch("http://127.0.0.1:9876/print", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(ticketData),
+    });
 
-  payload = {
-    store_name: venta.negocio.nombre,
-    items: venta.productos.map do |p|
-      { name: p.nombre, price: p.precio.to_f, qty: p.cantidad.to_i }
-    end,
-    subtotal: venta.subtotal.to_f,
-    iva: venta.iva.to_f,
-    total: venta.total.to_f
+    if (response.ok) {
+      console.log("✅ Ticket enviado a la impresora");
+    } else {
+      const errorMsg = await response.text();
+      console.error("❌ Error de impresión:", errorMsg);
+    }
+  } catch (error) {
+    console.error("⚠️ Puente de impresión desconectado:", error);
   }
-
-  http = Net::HTTP.new(uri.host, uri.port)
-  request = Net::HTTP::Post.new(uri.path, { "Content-Type" => "application/json" })
-  request.body = payload.to_json
-
-  response = http.request(request)
-
-  if response.code == "200"
-    puts "✅ Ticket impreso"
-  else
-    puts "❌ Error: #{response.body}"
-  end
-end
+}
 ```
 
-### Python
+---
 
-```python
-import requests
+### 3. React / Vue / Next.js
 
-def imprimir_ticket(venta):
-    url = "http://127.0.0.1:9876/print"
-    payload = {
-        "store_name": venta["negocio"]["nombre"],
-        "items": [
-            {"name": p["nombre"], "price": float(p["precio"]), "qty": int(p["cantidad"])}
-            for p in venta["productos"]
-        ],
-        "subtotal": float(venta["subtotal"]),
-        "iva": float(venta["iva"]),
-        "total": float(venta["total"]),
+```typescript
+export async function sendTicketToPrinter(ticket: Record<string, any>): Promise<boolean> {
+  try {
+    const res = await fetch("http://127.0.0.1:9876/print", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ticket),
+    });
+
+    if (!res.ok) {
+      throw new Error(await res.text());
     }
-    response = requests.post(url, json=payload)
-    if response.status_code == 200:
-        print("✅ Ticket impreso")
-    else:
-        print(f"❌ Error: {response.text}")
+    return true;
+  } catch (err) {
+    console.error("No se pudo imprimir el ticket:", err);
+    throw err;
+  }
+}
 ```
 
 ---
@@ -346,15 +290,11 @@ bun run dev
 
 ---
 
-## 📋 Requisitos
+## 📋 Requisitos para desarrollo
 
 - [Bun](https://bun.sh/) 1.0+ (o Node.js)
 - [Rust](https://www.rust-lang.org/) 1.70+
-- [Tauri CLI](https://v2.tauri.app/) (`bun add -g @tauri-apps/cli` o `bunx tauri`)
-- Linux: dependencias del sistema para Tauri
-  ```bash
-  sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-  ```
+- [Tauri](https://v2.tauri.app/start/prerequisites/) 
 
 ---
 
@@ -364,14 +304,14 @@ bun run dev
 |---|---|
 | La app no detecta la impresora | Verifica que esté conectada por USB. Crea una regla udev si no tienes permisos (ver abajo) |
 | `Error de hardware` al imprimir | La impresora puede estar desconectada o sin papel |
-| Rails no puede conectar al bridge | Asegúrate de que la app de escritorio esté abierta y el bridge activado (botón verde) |
+| App conectar al bridge | Asegúrate de que la app de escritorio esté abierta y el bridge activado (botón verde) |
 | La app no muestra nombres de dispositivos | Los nombres se leen de manufactura/producto USB. Si no existen, se muestra el ID |
 
 ### Regla udev para permisos USB (Linux)
 
 ```bash
 # /etc/udev/rules.d/99-usb-printers.rules
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0456", ATTRS{idProduct}=="0808", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="xxxx", ATTRS{idProduct}=="xxxx", MODE="0666"
 ```
 
 ```bash
