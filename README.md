@@ -335,22 +335,22 @@ def imprimir_ticket(venta):
 
 ```bash
 # Instalar dependencias
-npm install
+bun install
 
 # Ejecutar en modo desarrollo
-npm run tauri dev
+bun tauri dev
 
 # Solo frontend (sin Rust)
-npm run dev
+bun run dev
 ```
 
 ---
 
 ## 📋 Requisitos
 
-- [Node.js](https://nodejs.org/) 18+
+- [Bun](https://bun.sh/) 1.0+ (o Node.js)
 - [Rust](https://www.rust-lang.org/) 1.70+
-- [Tauri CLI](https://v2.tauri.app/) (`npm install -g @tauri-apps/cli`)
+- [Tauri CLI](https://v2.tauri.app/) (`bun add -g @tauri-apps/cli` o `bunx tauri`)
 - Linux: dependencias del sistema para Tauri
   ```bash
   sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
