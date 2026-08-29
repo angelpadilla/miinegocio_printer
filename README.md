@@ -125,11 +125,11 @@ Aplicación de escritorio (Tauri + Vue + Rust) que actúa como **puente local** 
 | `value` | string | ✅ | Valor, folio o URL del código |
 | `alignment` | string | `"center"` | Alineación: `"left"`, `"center"`, `"right"` |
 
-**Ejemplo Código de Barras:**
+**Ejemplo Código de Barras (Formato Code 128 - Acepta mayúsculas, minúsculas, números y símbolos):**
 ```json
 "barcode": {
   "type": "bar",
-  "value": "123123123",
+  "value": "LVAyK6Ket",
   "alignment": "center"
 }
 ```
@@ -147,12 +147,12 @@ Aplicación de escritorio (Tauri + Vue + Rust) que actúa como **puente local** 
 
 El ticket muestra los artículos en una tabla de 4 columnas calculada automáticamente según el tamaño de papel:
 
-| Columna | Alineación | Ancho en 80mm (64 car.) | Ancho en 60mm (48 car.) | Descripción |
+| Columna | Alineación | Ancho en 80mm (64 car.) | Ancho en 60mm (42 car.) | Descripción |
 |---|---|---|---|---|
-| **Item** | Izquierda | Hasta 36 caracteres | Hasta 26 caracteres | Nombre del producto (se trunca con `…` si excede) |
-| **Precio** | Derecha | 10 caracteres | 8 caracteres | Precio unitario formateado con `$X.XX` |
+| **Item** | Izquierda | 34 caracteres | 20 caracteres | Nombre del producto (continúa en renglones inferiores si es largo) |
+| **Precio** | Derecha | 11 caracteres | 7 caracteres | Precio unitario formateado con `$X.XX` |
 | **Cant** | Derecha | 8 caracteres | 6 caracteres | Cantidad vendida formateada con `X.XX` |
-| **Monto** | Derecha | 10 caracteres | 8 caracteres | Total por línea = precio × cant formateado con `$X.XX` |
+| **Monto** | Derecha | 11 caracteres | 9 caracteres | Total por línea = precio × cant formateado con `$X.XX` |
 
 ---
 

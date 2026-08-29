@@ -1153,6 +1153,40 @@ fn print_text_line(
     Ok(())
 }
 
+/// Imprime un código de barras 1D en formato Code 128 (Set B)
+/// Soporta todo el conjunto ASCII estándar (mayúsculas, minúsculas, números y símbolos).
+fn print_barcode_1d<D: escpos::driver::Driver>(
+    printer: &mut Printer<D>,
+    data: &str,
+) -> Result<(), String> {
+    let mut cmd = Vec::new();
+    // GS w 2: ancho de barra (2 dots)
+    cmd.extend_from_slice(&[0x1D, 0x77, 2]);
+    // GS h 60: altura de código de barras (60 dots)
+    cmd.extend_from_slice(&[0x1D, 0x68, 60]);
+    // GS H 2: texto legible (HRI) abajo del código de barras
+    cmd.extend_from_slice(&[0x1D, 0x48, 2]);
+    // GS f 0: fuente A para HRI
+    cmd.extend_from_slice(&[0x1D, 0x66, 0]);
+
+    // Code 128 con prefijo '{B' (Code Set B: caracteres completos ASCII imprimibles)
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&[b'{', b'B']);
+    payload.extend_from_slice(data.as_bytes());
+
+    let len = payload.len();
+    if len > 255 {
+        return Err("El texto del código de barras excede los 255 caracteres permitidos".to_string());
+    }
+
+    // GS k 73 <longitud> <datos>
+    cmd.extend_from_slice(&[0x1D, 0x6B, 73, len as u8]);
+    cmd.extend_from_slice(&payload);
+
+    printer.custom(&cmd).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // =========================================================================
 // 8. LÓGICA DE IMPRESIÓN CENTRALIZADA (formato universal)
 // =========================================================================
@@ -1282,20 +1316,9 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
 
         match barcode.barcode_type {
             BarcodeType::Bar => {
-                let bar_result = printer
-                    .code39_option(
-                        &barcode.value,
-                        BarcodeOption::new(
-                            BarcodeWidth::M,
-                            BarcodeHeight::M,
-                            BarcodeFont::A,
-                            BarcodePosition::Below,
-                        ),
-                    )
-                    .map_err(|e| e.to_string());
-                if let Err(e) = bar_result {
-                    eprintln!("Código de barras no se pudo imprimir: {}", e);
-                }
+                // Imprimir código de barras 1D en formato Code 128 (Set B)
+                // Code 128 soporta todo el abecedario (mayúsculas y minúsculas a-z/A-Z, números y símbolos)
+                let _ = print_barcode_1d(&mut printer, &barcode.value);
             }
             BarcodeType::Qr => {
                 if let Some(png_bytes) = generate_qr_png_bytes(&barcode.value, p, &barcode.alignment) {
