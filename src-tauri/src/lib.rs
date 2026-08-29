@@ -992,13 +992,13 @@ fn generate_centered_logo_png_bytes(logo_raw_bytes: &[u8], p: &PaperSize) -> Opt
     }
 
     let total_paper_width = match p {
-        PaperSize::Size60mm => 384u32, // 32 caracteres * 12 dots = 384 dots
-        PaperSize::Size80mm => 576u32, // 48 caracteres * 12 dots = 576 dots
+        PaperSize::Size60mm => 384u32, // 384 dots en 60mm
+        PaperSize::Size80mm => 576u32, // 576 dots en 80mm (ancho total del cabezal térmico)
     };
 
     let max_logo_w = match p {
-        PaperSize::Size60mm => 280u32,
-        PaperSize::Size80mm => 400u32,
+        PaperSize::Size60mm => 260u32,
+        PaperSize::Size80mm => 350u32,
     };
 
     let (target_w, target_h) = if orig_w > max_logo_w {
@@ -1014,9 +1014,15 @@ fn generate_centered_logo_png_bytes(logo_raw_bytes: &[u8], p: &PaperSize) -> Opt
         dynamic_img
     };
 
+    let hw_margin_offset = match p {
+        PaperSize::Size60mm => 16u32,
+        PaperSize::Size80mm => 28u32, // Compensación del margen mecánico izquierdo del texto
+    };
+
     let rgba_logo = resized_img.to_rgba8();
     let canvas_width = total_paper_width.max(target_w);
-    let left_offset = canvas_width.saturating_sub(target_w) / 2;
+    let left_offset = (canvas_width.saturating_sub(target_w) / 2 + hw_margin_offset)
+        .min(canvas_width.saturating_sub(target_w));
 
     let mut canvas = image::GrayImage::new(canvas_width, target_h);
     // Fondo blanco
@@ -1046,30 +1052,51 @@ fn generate_centered_logo_png_bytes(logo_raw_bytes: &[u8], p: &PaperSize) -> Opt
 
 /// Genera una imagen PNG monocromática del código QR en memoria
 /// con el lienzo ajustado al ancho del cabezal térmico (576 px para 80mm / 384 px para 60mm)
-/// para centrar o alinear horizontalmente el código QR con precisión en todas las impresoras.
+/// calculando una escala grande y nítida para que cualquier celular pueda escanearlo fácilmente
+/// incluso con cadenas de texto largas (como facturas SAT / CFDI).
 fn generate_qr_png_bytes(data: &str, p: &PaperSize, alignment: &TextAlignment) -> Option<Vec<u8>> {
-    use qrcode::{QrCode, Color};
+    use qrcode::{QrCode, Color, EcLevel};
 
-    let code = QrCode::new(data.as_bytes()).ok()?;
+    // Nivel de corrección M (15% recuperación de errores, ideal para comprobantes y tickets)
+    let code = QrCode::with_error_correction_level(data.as_bytes(), EcLevel::M)
+        .or_else(|_| QrCode::new(data.as_bytes()))
+        .ok()?;
+
     let width = code.width();
-    let scale = match p {
-        PaperSize::Size60mm => 3, // pixels por módulo
-        PaperSize::Size80mm => 4, // pixels por módulo
-    };
-    let border = 2; // zona de silencio
-    let qr_pixels = ((width + border * 2) * scale) as u32;
+    let border = 2; // Zona de silencio alrededor del QR
+    let total_modules = (width + border * 2) as u32;
 
     let total_paper_width = match p {
-        PaperSize::Size60mm => 384u32, // 32 caracteres * 12 dots = 384 dots
-        PaperSize::Size80mm => 576u32, // 48 caracteres * 12 dots = 576 dots
+        PaperSize::Size60mm => 384u32, // 384 dots en 60mm
+        PaperSize::Size80mm => 576u32, // 576 dots en 80mm (ancho total del cabezal térmico)
     };
 
+    // Dimensión objetivo para que el código QR sea grande, claro y simétrico
+    let target_max_dimension = match p {
+        PaperSize::Size60mm => 280u32,
+        PaperSize::Size80mm => 360u32,
+    };
+
+    // Escala calculada por módulo
+    let calculated_scale = (target_max_dimension / total_modules).max(1);
+    let scale = match p {
+        PaperSize::Size60mm => calculated_scale.clamp(4, 7),
+        PaperSize::Size80mm => calculated_scale.clamp(5, 9),
+    };
+
+    let qr_pixels = total_modules * scale;
     let canvas_width = total_paper_width.max(qr_pixels);
+
+    let hw_margin_offset = match p {
+        PaperSize::Size60mm => 16u32,
+        PaperSize::Size80mm => 28u32, // Compensación del margen mecánico izquierdo del texto
+    };
 
     let left_offset = match alignment {
         TextAlignment::Left => 0u32,
         TextAlignment::Right => canvas_width.saturating_sub(qr_pixels),
-        _ => canvas_width.saturating_sub(qr_pixels) / 2, // Centrado
+        _ => (canvas_width.saturating_sub(qr_pixels) / 2 + hw_margin_offset)
+            .min(canvas_width.saturating_sub(qr_pixels)), // Centrado óptico exacto con el texto
     };
 
     let mut img = image::GrayImage::new(canvas_width, qr_pixels);
@@ -1082,10 +1109,10 @@ fn generate_qr_png_bytes(data: &str, p: &PaperSize, alignment: &TextAlignment) -
     for y in 0..width {
         for x in 0..width {
             if code[(x, y)] == Color::Dark {
-                let px_start = left_offset + ((x + border) * scale) as u32;
-                let py_start = ((y + border) * scale) as u32;
-                for dy in 0..scale as u32 {
-                    for dx in 0..scale as u32 {
+                let px_start = left_offset + ((x + border) * scale as usize) as u32;
+                let py_start = ((y + border) * scale as usize) as u32;
+                for dy in 0..scale {
+                    for dx in 0..scale {
                         if px_start + dx < canvas_width {
                             img.put_pixel(px_start + dx, py_start + dy, image::Luma([0u8]));
                         }
@@ -1266,6 +1293,7 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
 
     printer
         .init().map_err(|e| e.to_string())?
+        .line_spacing(22).map_err(|e| e.to_string())? // Espaciado interlineal compacto
         .page_code(PageCode::PC858).map_err(|e| e.to_string())?;
 
     // ─── LOGO (opcional, solo si es una imagen válida) ───────────────────
@@ -1277,7 +1305,6 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
                 .map_err(|e| e.to_string())?
                 .bit_image_from_bytes(&final_bytes)
                 .map_err(|e| e.to_string());
-            let _ = printer.feed();
         }
     }
 
@@ -1298,14 +1325,12 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
 
     // ─── LÍNEAS ANTES DE ARTÍCULOS ───────────────────────────────────────
     if !payload.text_lines_before_items.is_empty() {
-        printer.feed().map_err(|e| e.to_string())?;
         for line in &payload.text_lines_before_items {
             print_text_line(&mut printer, p, line)?;
         }
     }
 
     // ─── TABLA DE ARTÍCULOS (en tamaño small / Font B) ───────────────────
-    printer.feed().map_err(|e| e.to_string())?;
     printer
         .font(Font::B)
         .map_err(|e| e.to_string())?
@@ -1329,8 +1354,6 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
 
     printer
         .writeln(&p.separator_font(&FontSize::Small))
-        .map_err(|e| e.to_string())?
-        .feed()
         .map_err(|e| e.to_string())?;
 
     // ─── SUBTOTAL E IVA (en tamaño small / Font B) ────────────────────────
@@ -1362,8 +1385,6 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
         .writeln(&p.format_two_cols("TOTAL:", &total_str))
         .map_err(|e| e.to_string())?
         .bold(false)
-        .map_err(|e| e.to_string())?
-        .feed()
         .map_err(|e| e.to_string())?;
 
     // ─── LÍNEAS DESPUÉS DE TOTALES ───────────────────────────────────────
@@ -1373,8 +1394,6 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
 
     // ─── CÓDIGO DE BARRAS / QR (opcional) ────────────────────────────────
     if let Some(barcode) = &payload.barcode {
-        printer.feed().map_err(|e| e.to_string())?;
-
         let justify = match barcode.alignment {
             TextAlignment::Left => JustifyMode::LEFT,
             TextAlignment::Right => JustifyMode::RIGHT,
