@@ -976,6 +976,74 @@ async fn download_logo_bytes(url: &str) -> Option<Vec<u8>> {
     }
 }
 
+/// Procesa una imagen de logotipo:
+/// 1. La escala proporcionalmente al ancho adecuado para tickets térmicos (máx. 300px en 80mm / 220px en 60mm).
+/// 2. Fusiona fondos transparentes RGBA con blanco puro.
+/// 3. La coloca exactamente en el centro horizontal sobre un lienzo del ancho del cabezal térmico (384 px en 80mm / 256 px en 60mm).
+/// 4. Devuelve los bytes PNG para que la impresora térmica imprima el logo físicamente centrado en cualquier marca.
+fn generate_centered_logo_png_bytes(logo_raw_bytes: &[u8], p: &PaperSize) -> Option<Vec<u8>> {
+    use image::GenericImageView;
+
+    let dynamic_img = image::load_from_memory(logo_raw_bytes).ok()?;
+    let (orig_w, orig_h) = dynamic_img.dimensions();
+
+    if orig_w == 0 || orig_h == 0 {
+        return None;
+    }
+
+    let total_paper_width = match p {
+        PaperSize::Size60mm => 384u32, // 32 caracteres * 12 dots = 384 dots
+        PaperSize::Size80mm => 576u32, // 48 caracteres * 12 dots = 576 dots
+    };
+
+    let max_logo_w = match p {
+        PaperSize::Size60mm => 280u32,
+        PaperSize::Size80mm => 400u32,
+    };
+
+    let (target_w, target_h) = if orig_w > max_logo_w {
+        let ratio = max_logo_w as f32 / orig_w as f32;
+        (max_logo_w, ((orig_h as f32 * ratio).round() as u32).max(1))
+    } else {
+        (orig_w, orig_h)
+    };
+
+    let resized_img = if target_w != orig_w || target_h != orig_h {
+        dynamic_img.resize_exact(target_w, target_h, image::imageops::FilterType::Lanczos3)
+    } else {
+        dynamic_img
+    };
+
+    let rgba_logo = resized_img.to_rgba8();
+    let canvas_width = total_paper_width.max(target_w);
+    let left_offset = canvas_width.saturating_sub(target_w) / 2;
+
+    let mut canvas = image::GrayImage::new(canvas_width, target_h);
+    // Fondo blanco
+    for pixel in canvas.pixels_mut() {
+        *pixel = image::Luma([255u8]);
+    }
+
+    // Copiar logo centrado fusionando canales de transparencia
+    for y in 0..target_h {
+        for x in 0..target_w {
+            let p_rgba = rgba_logo.get_pixel(x, y);
+            let alpha = p_rgba[3] as f32 / 255.0;
+            // Mezclar con fondo blanco
+            let r = p_rgba[0] as f32 * alpha + 255.0 * (1.0 - alpha);
+            let g = p_rgba[1] as f32 * alpha + 255.0 * (1.0 - alpha);
+            let b = p_rgba[2] as f32 * alpha + 255.0 * (1.0 - alpha);
+            let luma = (0.299 * r + 0.587 * g + 0.114 * b).round().clamp(0.0, 255.0) as u8;
+            canvas.put_pixel(left_offset + x, y, image::Luma([luma]));
+        }
+    }
+
+    let mut png_bytes = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut png_bytes);
+    canvas.write_to(&mut cursor, image::ImageOutputFormat::Png).ok()?;
+    Some(png_bytes)
+}
+
 /// Genera una imagen PNG monocromática del código QR en memoria
 /// con el lienzo ajustado al ancho del cabezal térmico (576 px para 80mm / 384 px para 60mm)
 /// para centrar o alinear horizontalmente el código QR con precisión en todas las impresoras.
@@ -992,8 +1060,8 @@ fn generate_qr_png_bytes(data: &str, p: &PaperSize, alignment: &TextAlignment) -
     let qr_pixels = ((width + border * 2) * scale) as u32;
 
     let total_paper_width = match p {
-        PaperSize::Size60mm => 256u32, // 32 caracteres * 8
-        PaperSize::Size80mm => 384u32, // 48 caracteres * 8
+        PaperSize::Size60mm => 384u32, // 32 caracteres * 12 dots = 384 dots
+        PaperSize::Size80mm => 576u32, // 48 caracteres * 12 dots = 576 dots
     };
 
     let canvas_width = total_paper_width.max(qr_pixels);
@@ -1203,10 +1271,11 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
     // ─── LOGO (opcional, solo si es una imagen válida) ───────────────────
     if let Some(logo_url) = &payload.logo_url {
         if let Some(bytes) = download_logo_bytes(logo_url).await {
+            let final_bytes = generate_centered_logo_png_bytes(&bytes, p).unwrap_or(bytes);
             let _ = printer
                 .justify(JustifyMode::CENTER)
                 .map_err(|e| e.to_string())?
-                .bit_image_from_bytes(&bytes)
+                .bit_image_from_bytes(&final_bytes)
                 .map_err(|e| e.to_string());
             let _ = printer.feed();
         }
