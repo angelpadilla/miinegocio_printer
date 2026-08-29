@@ -13,6 +13,8 @@ const statusMessage = ref("");
 const bridgeRunning = ref(false);
 const printLogs = ref([]);
 const logBox = ref(null);
+const expandedLogIndex = ref(null);
+const copiedIndex = ref(null);
 
 // Scroll automático al final del historial
 const scrollLogToBottom = async () => {
@@ -149,6 +151,24 @@ const fetchPrintHistory = async () => {
   }
 };
 
+const toggleExpandLog = (index) => {
+  expandedLogIndex.value = expandedLogIndex.value === index ? null : index;
+};
+
+const copyJson = async (jsonStr, index, event) => {
+  event?.stopPropagation();
+  if (!jsonStr) return;
+  try {
+    await navigator.clipboard.writeText(jsonStr);
+    copiedIndex.value = index;
+    setTimeout(() => {
+      if (copiedIndex.value === index) copiedIndex.value = null;
+    }, 2000);
+  } catch (err) {
+    console.error("Error al copiar JSON:", err);
+  }
+};
+
 onMounted(async () => {
   await loadSavedConfig();
   await fetchPrinters();
@@ -168,6 +188,7 @@ onMounted(async () => {
   // Escuchar nuevas entradas de historial de impresión
   await listen("print-log", (event) => {
     printLogs.value.push(event.payload);
+    expandedLogIndex.value = printLogs.value.length - 1;
     scrollLogToBottom();
   });
 });
@@ -182,7 +203,7 @@ onMounted(async () => {
     <div class="bridge-indicator">
       <span class="semaphore" :class="{ active: bridgeRunning }"></span>
       <span class="bridge-label">
-        Bridge {{ bridgeRunning ? 'activo' : 'inactivo' }}
+        Bridge {{ bridgeRunning ? 'activo' : 'inactivo' }} (Puerto 9876)
       </span>
     </div>
 
@@ -246,7 +267,7 @@ onMounted(async () => {
   "text_lines_after_items": [
     { "label": "Gracias", "alignment": "center", "font_size": 14 }
   ],
-  "barcode": { "type": "qr", "value": "https://ejemplo.com/ticket/1" }
+  "barcode": { "type": "qr", "value": "https://ejemplo.com/ticket/1", "alignment": "center" }
 }</pre>
         <p>Ver <code>README.md</code> para documentación completa.</p>
       </div>
@@ -255,7 +276,8 @@ onMounted(async () => {
     <!-- Historial de impresión -->
     <div class="log-section">
       <div class="log-header">
-        <strong>📋 Historial</strong>
+        <strong>📋 Historial de Impresiones</strong>
+        <span class="log-hint">Haz clic en un registro para ver su JSON</span>
         <button @click="fetchPrintHistory" class="btn-refresh">🔄 Refrescar</button>
       </div>
       <div ref="logBox" class="log-box">
@@ -265,17 +287,44 @@ onMounted(async () => {
         <div
           v-for="(log, i) in printLogs"
           :key="i"
-          class="log-entry"
-          :class="{ 'log-error': !log.success }"
+          class="log-card"
+          :class="{ 'log-card-error': !log.success }"
         >
-          <span class="log-time">{{ log.timestamp }}</span>
-          <span class="log-source">{{ log.source }}</span>
-          <span class="log-store">{{ log.store_name }}</span>
-          <span class="log-meta">
-            <template v-if="log.item_count > 0">{{ log.item_count }} items · </template>
-            {{ log.total }}
-          </span>
-          <span v-if="!log.success" class="log-badge">❌</span>
+          <div class="log-entry" @click="toggleExpandLog(i)">
+            <span class="log-toggle-icon">{{ expandedLogIndex === i ? '▼' : '▶' }}</span>
+            <span class="log-time">{{ log.timestamp }}</span>
+            <span class="log-source">{{ log.source }}</span>
+            <span class="log-store">{{ log.store_name }}</span>
+            <span class="log-meta">
+              <template v-if="log.item_count > 0">{{ log.item_count }} items · </template>
+              {{ log.total }}
+            </span>
+            <span v-if="!log.success" class="log-badge" title="Error">❌</span>
+            <span v-else class="log-badge" title="Éxito">✅</span>
+          </div>
+
+          <!-- Detalle expandible con el JSON recibido -->
+          <div v-if="expandedLogIndex === i" class="log-detail">
+            <div v-if="log.error_message" class="log-error-msg">
+              <strong>Error de hardware/sistema:</strong> {{ log.error_message }}
+            </div>
+
+            <div class="log-json-header">
+              <span><strong>JSON recibido:</strong></span>
+              <button
+                v-if="log.raw_json"
+                @click="copyJson(log.raw_json, i, $event)"
+                class="btn-copy"
+              >
+                {{ copiedIndex === i ? '✅ Copiado' : '📋 Copiar JSON' }}
+              </button>
+            </div>
+
+            <pre v-if="log.raw_json" class="log-json-content">{{ log.raw_json }}</pre>
+            <div v-else class="log-no-json">
+              (Sin payload JSON registrado para esta acción local)
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -286,7 +335,7 @@ onMounted(async () => {
 .container {
   font-family: Arial, sans-serif;
   padding: 20px;
-  max-width: 620px;
+  max-width: 650px;
   margin: 0 auto;
 }
 
@@ -417,8 +466,12 @@ button {
   align-items: center;
   margin-bottom: 8px;
 }
+.log-hint {
+  font-size: 12px;
+  color: #777;
+}
 .log-box {
-  max-height: 220px;
+  max-height: 320px;
   overflow-y: auto;
   background: #1e1e1e;
   border-radius: 6px;
@@ -431,25 +484,93 @@ button {
   text-align: center;
   padding: 20px 0;
 }
-.log-entry {
-  display: grid;
-  grid-template-columns: 105px 80px 1fr auto 20px;
-  gap: 6px;
-  align-items: center;
-  padding: 5px 6px;
+.log-card {
   border-bottom: 1px solid #333;
-  color: #ccc;
 }
-.log-entry:last-child {
+.log-card:last-child {
   border-bottom: none;
 }
-.log-entry.log-error {
+.log-card-error .log-entry {
   background: rgba(229, 57, 53, 0.12);
-  border-radius: 3px;
 }
-.log-time { color: #888; }
-.log-source { color: #64b5f6; font-weight: 600; }
+.log-entry {
+  display: grid;
+  grid-template-columns: 18px 85px 95px 1fr auto 24px;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 6px;
+  color: #ccc;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-radius: 4px;
+}
+.log-entry:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.log-toggle-icon {
+  font-size: 10px;
+  color: #888;
+  text-align: center;
+}
+.log-time { color: #888; font-size: 11px; }
+.log-source { color: #64b5f6; font-weight: 600; font-size: 11px; }
 .log-store { color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log-meta { color: #aaa; text-align: right; }
-.log-badge { text-align: center; }
+.log-badge { text-align: center; font-size: 12px; }
+
+/* Detalle expandible del JSON */
+.log-detail {
+  padding: 10px 12px;
+  background: #181818;
+  border-top: 1px dashed #333;
+  margin-bottom: 4px;
+  border-radius: 0 0 4px 4px;
+}
+.log-error-msg {
+  color: #ff6b6b;
+  background: rgba(229, 57, 53, 0.15);
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+.log-json-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  color: #aaa;
+  font-size: 11px;
+}
+.btn-copy {
+  background: #333;
+  color: #eee;
+  border: 1px solid #555;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-copy:hover {
+  background: #444;
+}
+.log-json-content {
+  background: #111;
+  color: #81c784;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  max-height: 200px;
+  overflow-x: auto;
+  overflow-y: auto;
+  white-space: pre;
+  line-height: 1.4;
+  margin: 0;
+}
+.log-no-json {
+  color: #777;
+  font-style: italic;
+  font-size: 11px;
+}
 </style>

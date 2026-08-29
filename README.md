@@ -94,12 +94,13 @@ Aplicación de escritorio (Tauri + Vue + Rust) que actúa como **puente local** 
   ],
   "barcode": {
     "type": "qr",
-    "value": "https://ejemplo.com/ticket/12345"
+    "value": "https://ejemplo.com/ticket/12345",
+    "alignment": "center"
   }
 }
 ```
 
-### Campos
+### Campos Principales
 
 | Campo | Tipo | Obligatorio | Descripción |
 |---|---|---|---|
@@ -108,44 +109,100 @@ Aplicación de escritorio (Tauri + Vue + Rust) que actúa como **puente local** 
 | `text_lines_before_items` | array | ❌ | Líneas de texto antes de los artículos (RFC, dirección, etc.) |
 | `items` | array | ✅ | Lista de productos vendidos |
 | `items[].name` | string | ✅ | Nombre del producto |
-| `items[].price` | number | ✅ | Precio unitario (decimal) |
-| `items[].qty` | number | ✅ | Cantidad vendida |
+| `items[].price` | number | ✅ | Precio unitario (decimal o string numérico) |
+| `items[].qty` | number | ✅ | Cantidad vendida (decimal o entero) |
 | `subtotal` | number | ❌ | Subtotal de la venta |
 | `iva` | number | ❌ | IVA / impuesto |
 | `total` | number | ✅ | Total de la venta |
-| `text_lines_after_items` | array | ❌ | Líneas después de total/subtotal/IVA. Para información adicional, notas o leyendas |
-| `barcode` | object | ❌ | Código de barras o QR (opcional, después de text_lines_after_items) |
-| `barcode.type` | string | ❌ | `"bar"` o `"qr"` |
-| `barcode.value` | string | ❌ | Valor del código |
+| `text_lines_after_items` | array | ❌ | Líneas después de total/subtotal/IVA. Para notas, formas de pago o leyendas |
+| `barcode` | object | ❌ | Código de barras o QR opcional (ver detalles abajo) |
+
+### Código de Barras / QR (`barcode`)
+
+| Campo | Tipo | Default | Descripción |
+|---|---|---|---|
+| `type` | string | ✅ | `"bar"` para código de barras (Code 39) o `"qr"` para código QR |
+| `value` | string | ✅ | Valor, folio o URL del código |
+| `alignment` | string | `"center"` | Alineación: `"left"`, `"center"`, `"right"` |
+
+**Ejemplo Código de Barras:**
+```json
+"barcode": {
+  "type": "bar",
+  "value": "123123123",
+  "alignment": "center"
+}
+```
+
+**Ejemplo Código QR:**
+```json
+"barcode": {
+  "type": "qr",
+  "value": "https://ejemplo.com/ticket/12345",
+  "alignment": "center"
+}
+```
 
 ### Tabla de artículos en el ticket impreso
 
-El ticket muestra los artículos en una tabla de 4 columnas:
+El ticket muestra los artículos en una tabla de 4 columnas calculada automáticamente según el tamaño de papel:
 
-| Columna | Descripción |
-|---|---|
-| **Item** | Nombre del producto (alineado a la izquierda) |
-| **Precio** | Precio unitario (alineado a la derecha) |
-| **Cant** | Cantidad vendida (alineado a la derecha) |
-| **Monto** | Total por línea = precio × cantidad (alineado a la derecha, calculado automáticamente) |
+| Columna | Alineación | Ancho en 80mm (64 car.) | Ancho en 60mm (48 car.) | Descripción |
+|---|---|---|---|---|
+| **Item** | Izquierda | Hasta 36 caracteres | Hasta 26 caracteres | Nombre del producto (se trunca con `…` si excede) |
+| **Precio** | Derecha | 10 caracteres | 8 caracteres | Precio unitario formateado con `$X.XX` |
+| **Cant** | Derecha | 8 caracteres | 6 caracteres | Cantidad vendida formateada con `X.XX` |
+| **Monto** | Derecha | 10 caracteres | 8 caracteres | Total por línea = precio × cant formateado con `$X.XX` |
+
+---
+
+### 🔢 Capacidad de Dígitos y Decimales
+
+#### Número de Decimales:
+* **Montos monetarios (`price`, `subtotal`, `iva`, `total`, `monto de línea`)**: Se formatean y redondean siempre a **2 decimales** estándar de moneda (ej. `$45.00`, `$1,250.50`). En el JSON puedes enviar números con cualquier precisión flotante (`45.5`, `45.509`, `"45.50"`).
+* **Cantidad (`qty`)**: Se formatea con **2 decimales** (ej. `2.00`, `1.50`, `0.75`), lo que permite tanto cantidades por piezas como ventas a granel o peso (kg/litros).
+
+#### Máximo de Dígitos Enteros según el Papel:
+
+| Campo | Papel de 80mm (64 car.) | Papel de 60mm / 58mm (48 car.) | Ejemplo de valor máximo |
+|---|---|---|---|
+| **Precio (`item.price`)** | Hasta **7 dígitos enteros** + 2 dec. | Hasta **5 dígitos enteros** + 2 dec. | `$9,999,999.99` (80mm) / `$99,999.99` (60mm) |
+| **Cantidad (`item.qty`)** | Hasta **5 dígitos enteros** + 2 dec. | Hasta **3 dígitos enteros** + 2 dec. | `99,999.99` (80mm) / `999.99` (60mm) |
+| **Monto (`price × qty`)** | Hasta **7 dígitos enteros** + 2 dec. | Hasta **5 dígitos enteros** + 2 dec. | `$9,999,999.99` (80mm) / `$99,999.99` (60mm) |
+| **Subtotal e IVA** | Hasta **50+ dígitos enteros** | Hasta **35+ dígitos enteros** | Sin límite práctico |
+| **TOTAL (fuente 2x2)** | Hasta **25 dígitos de monto** | Hasta **17 dígitos de monto** | `$999,999,999,999,999,999.99` |
+
+---
 
 ### TextLine (`text_lines_before_items` / `text_lines_after_items`)
 
 | Campo | Tipo | Default | Descripción |
 |---|---|---|---|
 | `label` | string | — | Texto de la etiqueta |
-| `label_bold` | bool | `false` | Negrita para la etiqueta |
+| `label_bold` | bool | `false` | Negrita solo para la etiqueta |
 | `value` | string | — | Valor o texto |
-| `value_bold` | bool | `false` | Negrita para el valor |
-| `font_size` | number | `12` | Tamaño de fuente (12 = normal) |
+| `value_bold` | bool | `false` | Negrita solo para el valor |
+| `font_size` | number | `12` | Tamaño de fuente (ver tabla de escalas abajo) |
 | `alignment` | string | `"left"` | `"left"`, `"right"`, `"center"`, `"space_between"` |
 
-### Respuestas
+#### Escala de `font_size` en Impresoras Térmicas:
+
+Las impresoras térmicas ESC/POS tienen fuentes de matriz de puntos fijas. La app traduce el número de `font_size` en las combinaciones óptimas de fuente y escala:
+
+| `font_size` | Tipo de Fuente | Escala (Ancho × Alto) | Efecto Visual en el Ticket | Uso Recomendado |
+|---|---|---|---|---|
+| **`< 12`** (8, 9, 10, 11) | Font B (Compacta) | `1 × 1` | Letra pequeña y condensada | Leyendas, notas al pie, dirección, RFC |
+| **`12 - 13`** (Default: 12) | Font A (Estándar) | `1 × 1` | Letra normal estándar | Texto general de lectura |
+| **`14 - 17`** (14, 16) | Font A (Estándar) | `1 × 2` | **Doble alto (más estilizada sin ensanchar)** | Agradecimiento, folios destacados |
+| **`18 - 23`** (18, 20) | Font A (Estándar) | `2 × 2` | **Doble ancho y doble alto (Grande)** | Títulos, Total, Nombre de tienda |
+| **`≥ 24`** (24, 32) | Font A (Estándar) | `3 × 3` | Muy grande | Encabezados de gran tamaño |
+
+### Respuestas HTTP del Bridge
 
 | Código | Significado |
 |---|---|
 | `200 OK` | Ticket impreso correctamente |
-| `400 Bad Request` | No hay impresora configurada (no se ha activado el bridge) |
+| `400 Bad Request` | Error en estructura JSON o no hay impresora guardada |
 | `500 Internal Server Error` | Error de hardware (impresora desconectada, sin papel, etc.) |
 
 ---
