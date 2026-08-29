@@ -54,13 +54,13 @@ Aplicación de escritorio (Tauri + Vue + Rust) que actúa como **puente local** 
       "label_bold": true,
       "value": "XAXX010101000",
       "value_bold": true,
-      "font_size": 12,
+      "font_size": "small",
       "alignment": "space_between"
     },
     {
       "label": "Dirección: ",
       "value": "Av. Principal #123, Centro",
-      "font_size": 10,
+      "font_size": "small",
       "alignment": "left"
     }
   ],
@@ -83,12 +83,12 @@ Aplicación de escritorio (Tauri + Vue + Rust) que actúa como **puente local** 
     {
       "label": "Forma de pago: ",
       "value": "Tarjeta de crédito",
-      "font_size": 10,
+      "font_size": "small",
       "alignment": "left"
     },
     {
       "label": "¡Gracias por su compra!",
-      "font_size": 14,
+      "font_size": "medium",
       "alignment": "center"
     }
   ],
@@ -182,20 +182,13 @@ El ticket muestra los artículos en una tabla de 4 columnas calculada automátic
 | `label_bold` | bool | `false` | Negrita solo para la etiqueta |
 | `value` | string | — | Valor o texto |
 | `value_bold` | bool | `false` | Negrita solo para el valor |
-| `font_size` | number | `12` | Tamaño de fuente (ver tabla de escalas abajo) |
+| `font_size` | string | `"small"` | Tamaño de fuente: `"small"` (compacta), `"medium"` (normal), `"big"` (grande) |
 | `alignment` | string | `"left"` | `"left"`, `"right"`, `"center"`, `"space_between"` |
 
-#### Escala de `font_size` en Impresoras Térmicas:
-
-Las impresoras térmicas ESC/POS tienen fuentes de matriz de puntos fijas. La app traduce el número de `font_size` en las combinaciones óptimas de fuente y escala:
-
-| `font_size` | Tipo de Fuente | Escala (Ancho × Alto) | Efecto Visual en el Ticket | Uso Recomendado |
-|---|---|---|---|---|
-| **`< 12`** (8, 9, 10, 11) | Font B (Compacta) | `1 × 1` | Letra pequeña y condensada | Leyendas, notas al pie, dirección, RFC |
-| **`12 - 13`** (Default: 12) | Font A (Estándar) | `1 × 1` | Letra normal estándar | Texto general de lectura |
-| **`14 - 17`** (14, 16) | Font A (Estándar) | `1 × 2` | **Doble alto (más estilizada sin ensanchar)** | Agradecimiento, folios destacados |
-| **`18 - 23`** (18, 20) | Font A (Estándar) | `2 × 2` | **Doble ancho y doble alto (Grande)** | Títulos, Total, Nombre de tienda |
-| **`≥ 24`** (24, 32) | Font A (Estándar) | `3 × 3` | Muy grande | Encabezados de gran tamaño |
+#### Valores de `font_size`:
+* **`"small"` (Por defecto)**: Fuente compacta y nítida (Font B). Es el tamaño ideal para que todo el texto secundario, RFC, folios y direcciones quepan sin verse gigantes.
+* **`"medium"`**: Fuente normal estándar (Font A 1x1).
+* **`"big"`**: Fuente grande destacada (Font A 2x2 en doble ancho y doble alto). Ideal para títulos y mensajes llamativos.
 
 ### Respuestas HTTP del Bridge
 

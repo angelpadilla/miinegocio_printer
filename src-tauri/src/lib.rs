@@ -25,13 +25,30 @@ pub enum PaperSize {
 }
 
 impl PaperSize {
-    /// Número de caracteres por línea para ocupar el 100% del ancho del papel:
-    /// - 60mm / 58mm: 48 caracteres
-    /// - 80mm: 64 caracteres
+    /// Número de caracteres por línea según la fuente:
+    /// - Font A (Medium): 48 car. en 80mm, 32 car. en 60mm
+    /// - Font B (Small):  64 car. en 80mm, 42 car. en 60mm
     pub fn chars_per_line(&self) -> usize {
         match self {
-            PaperSize::Size60mm => 48,
-            PaperSize::Size80mm => 64,
+            PaperSize::Size60mm => 32,
+            PaperSize::Size80mm => 48,
+        }
+    }
+
+    pub fn chars_per_line_font(&self, font: &FontSize) -> usize {
+        match font {
+            FontSize::Small => match self {
+                PaperSize::Size80mm => 64,
+                PaperSize::Size60mm => 42,
+            },
+            FontSize::Medium => match self {
+                PaperSize::Size80mm => 48,
+                PaperSize::Size60mm => 32,
+            },
+            FontSize::Big => match self {
+                PaperSize::Size80mm => 24,
+                PaperSize::Size60mm => 16,
+            },
         }
     }
 
@@ -39,17 +56,17 @@ impl PaperSize {
         "-".repeat(self.chars_per_line())
     }
 
-    /// Formatea dos columnas alineadas a los extremos (Izquierda y Derecha)
-    /// Calculando la longitud exacta de caracteres Unicode.
-    pub fn format_two_cols(&self, left: &str, right: &str) -> String {
-        self.format_two_cols_sized(left, right, 1)
+    pub fn separator_font(&self, font: &FontSize) -> String {
+        "-".repeat(self.chars_per_line_font(font))
     }
 
-    /// Formatea dos columnas considerando el factor de escala de fuente
-    /// (ej. tamaño 2x2 reduce el número de caracteres disponibles a la mitad).
-    pub fn format_two_cols_sized(&self, left: &str, right: &str, size_mult: usize) -> String {
-        let mult = size_mult.max(1);
-        let total_width = (self.chars_per_line() / mult).max(1);
+    /// Formatea dos columnas alineadas a los extremos (Izquierda y Derecha)
+    pub fn format_two_cols(&self, left: &str, right: &str) -> String {
+        self.format_two_cols_font(left, right, &FontSize::Medium)
+    }
+
+    pub fn format_two_cols_font(&self, left: &str, right: &str, font: &FontSize) -> String {
+        let total_width = self.chars_per_line_font(font);
         let left_len = left.chars().count();
         let right_len = right.chars().count();
 
@@ -61,28 +78,107 @@ impl PaperSize {
         }
     }
 
-    /// Formatea fila de 4 columnas: Item, Precio, Cant, Monto ocupando todo el ancho
-    pub fn format_table_row(&self, item: &str, price: &str, qty: &str, amount: &str) -> String {
-        let total_width = self.chars_per_line();
-        let (price_w, qty_w, amount_w) = match self {
-            PaperSize::Size60mm => (8, 6, 8),
-            PaperSize::Size80mm => (10, 8, 10),
+    /// Divide un texto en líneas de máximo `max_width` caracteres respetando palabras.
+    pub fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+        if max_width == 0 {
+            return vec![text.to_string()];
+        }
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+
+        for word in text.split_whitespace() {
+            let word_len = word.chars().count();
+            if word_len > max_width {
+                if !current_line.is_empty() {
+                    lines.push(current_line);
+                    current_line = String::new();
+                }
+                let chars: Vec<char> = word.chars().collect();
+                for chunk in chars.chunks(max_width) {
+                    lines.push(chunk.iter().collect());
+                }
+            } else if current_line.is_empty() {
+                current_line = word.to_string();
+            } else if current_line.chars().count() + 1 + word_len <= max_width {
+                current_line.push(' ');
+                current_line.push_str(word);
+            } else {
+                lines.push(current_line);
+                current_line = word.to_string();
+            }
+        }
+
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+
+        lines
+    }
+
+    /// Formatea un artículo en una o múltiples líneas si el nombre es largo.
+    /// La primera línea lleva el inicio del Item + Precio + Cant + Monto alineados a la derecha.
+    /// Las líneas siguientes continúan el texto del Item abajo con espacios vacíos a la derecha.
+    pub fn format_table_item_lines(
+        &self,
+        item: &str,
+        price: &str,
+        qty: &str,
+        amount: &str,
+    ) -> Vec<String> {
+        let (total_width, price_w, qty_w, amount_w): (usize, usize, usize, usize) = match self {
+            PaperSize::Size60mm => (42, 7, 6, 9),
+            PaperSize::Size80mm => (64, 11, 8, 11),
         };
         let item_w = total_width.saturating_sub(price_w + qty_w + amount_w);
+        let right_padding = price_w + qty_w + amount_w;
 
-        let item_display: String = if item.chars().count() > item_w {
-            item.chars().take(item_w.saturating_sub(1)).collect::<String>() + "…"
-        } else {
-            let spaces = item_w.saturating_sub(item.chars().count());
-            format!("{}{}", item, " ".repeat(spaces))
+        let name_lines = Self::wrap_text(item, item_w);
+        let mut result = Vec::new();
+
+        for (i, name_part) in name_lines.into_iter().enumerate() {
+            let part_len = name_part.chars().count();
+            let spaces = item_w.saturating_sub(part_len);
+            let item_col = format!("{}{}", name_part, " ".repeat(spaces));
+
+            if i == 0 {
+                result.push(format!(
+                    "{}{:>price_w$}{:>qty_w$}{:>amount_w$}",
+                    item_col,
+                    price,
+                    qty,
+                    amount,
+                    price_w = price_w,
+                    qty_w = qty_w,
+                    amount_w = amount_w,
+                ));
+            } else {
+                result.push(format!("{}{}", item_col, " ".repeat(right_padding)));
+            }
+        }
+
+        result
+    }
+
+    pub fn format_table_header_small(&self) -> String {
+        let (total_width, price_w, qty_w, amount_w): (usize, usize, usize, usize) = match self {
+            PaperSize::Size60mm => (42, 7, 6, 9),
+            PaperSize::Size80mm => (64, 11, 8, 11),
         };
+        let item_w = total_width.saturating_sub(price_w + qty_w + amount_w);
+        let item_len = "Item".chars().count();
+        let spaces = item_w.saturating_sub(item_len);
+        let item_col = format!("Item{}", " ".repeat(spaces));
 
         format!(
             "{}{:>price_w$}{:>qty_w$}{:>amount_w$}",
-            item_display,
-            price,
-            qty,
-            amount,
+            item_col,
+            "Precio",
+            "Cant",
+            "Monto",
             price_w = price_w,
             qty_w = qty_w,
             amount_w = amount_w,
@@ -90,7 +186,7 @@ impl PaperSize {
     }
 
     pub fn format_table_header(&self) -> String {
-        self.format_table_row("Item", "Precio", "Cant", "Monto")
+        self.format_table_header_small()
     }
 }
 
@@ -225,21 +321,58 @@ pub struct TicketItem {
     pub qty: f64,
 }
 
-fn deserialize_flexible_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub enum FontSize {
+    #[default]
+    #[serde(rename = "small", alias = "Small", alias = "SMALL", alias = "sm", alias = "pequena", alias = "pequeña", alias = "compact")]
+    Small,
+    #[serde(rename = "medium", alias = "Medium", alias = "MEDIUM", alias = "normal", alias = "mediana", alias = "md")]
+    Medium,
+    #[serde(rename = "big", alias = "Big", alias = "BIG", alias = "grande", alias = "large", alias = "lg")]
+    Big,
+}
+
+fn deserialize_flexible_font_size<'de, D>(deserializer: D) -> Result<FontSize, D::Error>
 where
     D: Deserializer<'de>,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum FlexU32 {
-        Num(u32),
+    enum FlexSize {
         Str(String),
+        Num(u32),
     }
 
-    match Option::<FlexU32>::deserialize(deserializer)? {
-        Some(FlexU32::Num(n)) => Ok(n),
-        Some(FlexU32::Str(s)) => s.trim().parse::<u32>().map_err(de::Error::custom),
-        None => Ok(default_font_size()),
+    match Option::<FlexSize>::deserialize(deserializer)? {
+        Some(FlexSize::Str(s)) => match s.trim().to_lowercase().as_str() {
+            "small" | "sm" | "pequena" | "pequeña" | "compact" => Ok(FontSize::Small),
+            "medium" | "md" | "normal" | "mediana" | "default" => Ok(FontSize::Medium),
+            "big" | "lg" | "large" | "grande" => Ok(FontSize::Big),
+            val => {
+                if let Ok(n) = val.parse::<u32>() {
+                    if n < 12 {
+                        Ok(FontSize::Small)
+                    } else if n < 18 {
+                        Ok(FontSize::Medium)
+                    } else {
+                        Ok(FontSize::Big)
+                    }
+                } else {
+                    Ok(FontSize::Small)
+                }
+            }
+        },
+        Some(FlexSize::Num(n)) => {
+            if n < 12 {
+                Ok(FontSize::Small)
+            } else if n < 18 {
+                Ok(FontSize::Medium)
+            } else {
+                Ok(FontSize::Big)
+            }
+        }
+        None => Ok(FontSize::Small),
     }
 }
 
@@ -280,16 +413,12 @@ pub struct TextLine {
     /// Si el valor debe ir en negrita
     #[serde(default, alias = "value_bold", alias = "valueBold", deserialize_with = "deserialize_flexible_bool")]
     pub value_bold: bool,
-    /// Tamaño de fuente (12 = normal)
-    #[serde(default = "default_font_size", alias = "font_size", alias = "fontSize", alias = "size", deserialize_with = "deserialize_flexible_u32")]
-    pub font_size: u32,
+    /// Tamaño de fuente ("small", "medium", "big")
+    #[serde(default, alias = "font_size", alias = "fontSize", alias = "size", deserialize_with = "deserialize_flexible_font_size")]
+    pub font_size: FontSize,
     /// Alineación del texto
     #[serde(default, alias = "alignment", alias = "align")]
     pub alignment: TextAlignment,
-}
-
-fn default_font_size() -> u32 {
-    12
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -741,7 +870,7 @@ async fn print_test_ticket(
                 label_bold: true,
                 value: Some("XAXX010101000".to_string()),
                 value_bold: true,
-                font_size: 12,
+                font_size: FontSize::Small,
                 alignment: TextAlignment::SpaceBetween,
             },
             TextLine {
@@ -749,7 +878,7 @@ async fn print_test_ticket(
                 label_bold: false,
                 value: Some("Av. Principal #123, Centro".to_string()),
                 value_bold: false,
-                font_size: 10,
+                font_size: FontSize::Small,
                 alignment: TextAlignment::Left,
             },
             TextLine {
@@ -757,7 +886,7 @@ async fn print_test_ticket(
                 label_bold: false,
                 value: Some("Juan Pérez".to_string()),
                 value_bold: false,
-                font_size: 10,
+                font_size: FontSize::Small,
                 alignment: TextAlignment::Left,
             },
         ],
@@ -787,7 +916,7 @@ async fn print_test_ticket(
                 label_bold: false,
                 value: Some("Tarjeta de crédito".to_string()),
                 value_bold: false,
-                font_size: 10,
+                font_size: FontSize::Small,
                 alignment: TextAlignment::SpaceBetween,
             },
             TextLine {
@@ -795,7 +924,7 @@ async fn print_test_ticket(
                 label_bold: false,
                 value: None,
                 value_bold: false,
-                font_size: 14,
+                font_size: FontSize::Medium,
                 alignment: TextAlignment::Center,
             },
         ],
@@ -856,15 +985,15 @@ fn generate_qr_png_bytes(data: &str, p: &PaperSize, alignment: &TextAlignment) -
     let code = QrCode::new(data.as_bytes()).ok()?;
     let width = code.width();
     let scale = match p {
-        PaperSize::Size60mm => 4, // 4 pixels por módulo
-        PaperSize::Size80mm => 6, // 6 pixels por módulo
+        PaperSize::Size60mm => 3, // pixels por módulo
+        PaperSize::Size80mm => 4, // pixels por módulo
     };
     let border = 2; // zona de silencio
     let qr_pixels = ((width + border * 2) * scale) as u32;
 
     let total_paper_width = match p {
-        PaperSize::Size60mm => 384u32, // 58mm / 60mm = 384 puntos
-        PaperSize::Size80mm => 576u32, // 80mm = 576 puntos
+        PaperSize::Size60mm => 256u32, // 32 caracteres * 8
+        PaperSize::Size80mm => 384u32, // 48 caracteres * 8
     };
 
     let canvas_width = total_paper_width.max(qr_pixels);
@@ -913,39 +1042,41 @@ fn print_text_line(
     p: &PaperSize,
     line: &TextLine,
 ) -> Result<(), String> {
-    let (font_type, width_mult, height_mult) = if line.font_size < 12 {
-        (Font::B, 1u8, 1u8) // Fuente compacta/pequeña (9x17)
-    } else if line.font_size < 14 {
-        (Font::A, 1u8, 1u8) // Fuente estándar normal (12x24)
-    } else if line.font_size < 18 {
-        (Font::A, 1u8, 2u8) // Doble Altura (altura 2x, ancho normal 1x)
-    } else if line.font_size < 24 {
-        (Font::A, 2u8, 2u8) // Doble Ancho y Doble Alto (2x2)
-    } else {
-        (Font::A, 3u8, 3u8) // Grande (3x3)
+    match line.font_size {
+        FontSize::Small => {
+            printer.font(Font::B).map_err(|e| e.to_string())?;
+        }
+        FontSize::Medium => {
+            printer.font(Font::A).map_err(|e| e.to_string())?;
+        }
+        FontSize::Big => {
+            printer.font(Font::A).map_err(|e| e.to_string())?;
+            printer.size(2, 2).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let line_width: usize = match line.font_size {
+        FontSize::Small => match p {
+            PaperSize::Size80mm => 64, // Font B en 80mm
+            PaperSize::Size60mm => 42, // Font B en 60mm
+        },
+        FontSize::Medium => match p {
+            PaperSize::Size80mm => 48, // Font A en 80mm
+            PaperSize::Size60mm => 32, // Font A en 60mm
+        },
+        FontSize::Big => match p {
+            PaperSize::Size80mm => 24, // Font A 2x2 en 80mm
+            PaperSize::Size60mm => 16, // Font A 2x2 en 60mm
+        },
     };
-
-    if font_type != Font::A {
-        printer.font(font_type).map_err(|e| e.to_string())?;
-    }
-
-    if width_mult > 1 || height_mult > 1 {
-        printer.size(width_mult, height_mult).map_err(|e| e.to_string())?;
-    }
 
     match line.alignment {
         TextAlignment::SpaceBetween => {
             let left = line.label.as_deref().unwrap_or("");
             let right = line.value.as_deref().unwrap_or("");
-            let mult = (width_mult as usize).max(1);
-            let base_chars = match font_type {
-                Font::B => p.chars_per_line() * 4 / 3,
-                _ => p.chars_per_line(),
-            };
-            let total_width = (base_chars / mult).max(1);
             let left_len = left.chars().count();
             let right_len = right.chars().count();
-            let spaces_count = total_width.saturating_sub(left_len + right_len);
+            let spaces_count = line_width.saturating_sub(left_len + right_len);
             let spaces = " ".repeat(spaces_count);
 
             printer.justify(JustifyMode::LEFT).map_err(|e| e.to_string())?;
@@ -1009,11 +1140,14 @@ fn print_text_line(
         }
     }
 
-    if width_mult > 1 || height_mult > 1 {
-        printer.reset_size().map_err(|e| e.to_string())?;
-    }
-    if font_type != Font::A {
-        printer.font(Font::A).map_err(|e| e.to_string())?;
+    match line.font_size {
+        FontSize::Small => {
+            let _ = printer.font(Font::A);
+        }
+        FontSize::Big => {
+            let _ = printer.reset_size();
+        }
+        _ => {}
     }
 
     Ok(())
@@ -1067,63 +1201,64 @@ async fn execute_print(config: PrinterConfig, payload: TicketPayload) -> Result<
         }
     }
 
-    // ─── TABLA DE ARTÍCULOS ──────────────────────────────────────────────
+    // ─── TABLA DE ARTÍCULOS (en tamaño small / Font B) ───────────────────
     printer.feed().map_err(|e| e.to_string())?;
     printer
+        .font(Font::B)
+        .map_err(|e| e.to_string())?
         .justify(JustifyMode::LEFT)
         .map_err(|e| e.to_string())?
-        .writeln(&p.separator())
+        .writeln(&p.separator_font(&FontSize::Small))
         .map_err(|e| e.to_string())?
-        .writeln(&p.format_table_header())
+        .writeln(&p.format_table_header_small())
         .map_err(|e| e.to_string())?
-        .writeln(&p.separator())
+        .writeln(&p.separator_font(&FontSize::Small))
         .map_err(|e| e.to_string())?;
 
     for item in &payload.items {
         let price_str = format!("${:.2}", item.price);
         let qty_str = format!("{:.2}", item.qty);
         let amount_str = format!("${:.2}", item.price * item.qty);
-        printer
-            .writeln(&p.format_table_row(&item.name, &price_str, &qty_str, &amount_str))
-            .map_err(|e| e.to_string())?;
+        for line in p.format_table_item_lines(&item.name, &price_str, &qty_str, &amount_str) {
+            printer.writeln(&line).map_err(|e| e.to_string())?;
+        }
     }
 
     printer
-        .writeln(&p.separator())
+        .writeln(&p.separator_font(&FontSize::Small))
         .map_err(|e| e.to_string())?
         .feed()
         .map_err(|e| e.to_string())?;
 
-    // ─── SUBTOTAL E IVA (opcionales) ─────────────────────────────────────
+    // ─── SUBTOTAL E IVA (en tamaño small / Font B) ────────────────────────
     if let Some(subtotal) = payload.subtotal {
         printer
             .justify(JustifyMode::LEFT)
             .map_err(|e| e.to_string())?
-            .writeln(&p.format_two_cols("Subtotal:", &format!("${:.2}", subtotal)))
+            .writeln(&p.format_two_cols_font("Subtotal:", &format!("${:.2}", subtotal), &FontSize::Small))
             .map_err(|e| e.to_string())?;
     }
     if let Some(iva) = payload.iva {
         printer
             .justify(JustifyMode::LEFT)
             .map_err(|e| e.to_string())?
-            .writeln(&p.format_two_cols("IVA:", &format!("${:.2}", iva)))
+            .writeln(&p.format_two_cols_font("IVA:", &format!("${:.2}", iva), &FontSize::Small))
             .map_err(|e| e.to_string())?;
     }
 
-    // ─── TOTAL ───────────────────────────────────────────────────────────
+    // Cambiar a Font A para el TOTAL en tamaño medium
+    let _ = printer.font(Font::A);
+
+    // ─── TOTAL (en tamaño medium / Font A con negrita) ───────────────────
     let total_str = format!("${:.2}", payload.total);
     printer
         .justify(JustifyMode::LEFT)
         .map_err(|e| e.to_string())?
-        .size(2, 2)
-        .map_err(|e| e.to_string())?
         .bold(true)
         .map_err(|e| e.to_string())?
-        .writeln(&p.format_two_cols_sized("TOTAL:", &total_str, 2))
+        .writeln(&p.format_two_cols("TOTAL:", &total_str))
         .map_err(|e| e.to_string())?
         .bold(false)
-        .map_err(|e| e.to_string())?
-        .reset_size()
         .map_err(|e| e.to_string())?
         .feed()
         .map_err(|e| e.to_string())?;
@@ -1515,45 +1650,46 @@ mod tests {
             }
         }
 
-        // Tabla
+        // Tabla (en Font B small)
         printer.feed().unwrap();
         printer
+            .font(Font::B).unwrap()
             .justify(JustifyMode::LEFT).unwrap()
-            .writeln(&p.separator()).unwrap()
-            .writeln(&p.format_table_header()).unwrap()
-            .writeln(&p.separator()).unwrap();
+            .writeln(&p.separator_font(&FontSize::Small)).unwrap()
+            .writeln(&p.format_table_header_small()).unwrap()
+            .writeln(&p.separator_font(&FontSize::Small)).unwrap();
 
         for item in &payload.items {
             let price_str = format!("${:.2}", item.price);
             let qty_str = format!("{:.2}", item.qty);
             let amount_str = format!("${:.2}", item.price * item.qty);
-            printer
-                .writeln(&p.format_table_row(&item.name, &price_str, &qty_str, &amount_str)).unwrap();
+            for line in p.format_table_item_lines(&item.name, &price_str, &qty_str, &amount_str) {
+                printer.writeln(&line).unwrap();
+            }
         }
 
-        printer.writeln(&p.separator()).unwrap().feed().unwrap();
+        printer.writeln(&p.separator_font(&FontSize::Small)).unwrap().feed().unwrap();
 
-        // Subtotal e iva
+        // Subtotal e iva (en Font B small)
         if let Some(subtotal) = payload.subtotal {
             printer
                 .justify(JustifyMode::LEFT).unwrap()
-                .writeln(&p.format_two_cols("Subtotal:", &format!("${:.2}", subtotal))).unwrap();
+                .writeln(&p.format_two_cols_font("Subtotal:", &format!("${:.2}", subtotal), &FontSize::Small)).unwrap();
         }
         if let Some(iva) = payload.iva {
             printer
                 .justify(JustifyMode::LEFT).unwrap()
-                .writeln(&p.format_two_cols("IVA:", &format!("${:.2}", iva))).unwrap();
+                .writeln(&p.format_two_cols_font("IVA:", &format!("${:.2}", iva), &FontSize::Small)).unwrap();
         }
 
-        // Total
+        // Total (en Font A medium con bold)
+        let _ = printer.font(Font::A);
         let total_str = format!("${:.2}", payload.total);
         printer
             .justify(JustifyMode::LEFT).unwrap()
-            .size(2, 2).unwrap()
             .bold(true).unwrap()
-            .writeln(&p.format_two_cols_sized("TOTAL:", &total_str, 2)).unwrap()
+            .writeln(&p.format_two_cols("TOTAL:", &total_str)).unwrap()
             .bold(false).unwrap()
-            .reset_size().unwrap()
             .feed().unwrap();
 
         // Líneas después
@@ -1588,7 +1724,7 @@ mod tests {
                 "labelBold": true,
                 "value": "XAXX010101000",
                 "valueBold": true,
-                "fontSize": "12",
+                "fontSize": "small",
                 "alignment": "spaceBetween"
               }
             ],
@@ -1605,18 +1741,21 @@ mod tests {
             "textLinesAfterItems": [
               {
                 "label": "¡Gracias!",
+                "fontSize": "big",
                 "alignment": "center"
               }
             ],
             "barcode": {
               "type": "qr",
-              "value": "https://test.com"
+              "value": "https://test.com",
+              "alignment": "center"
             }
         }"#;
 
         let payload: TicketPayload = serde_json::from_str(json_data).unwrap();
         assert_eq!(payload.store_name, "Tienda CamelCase");
         assert_eq!(payload.text_lines_before_items.len(), 1);
+        assert_eq!(payload.text_lines_before_items[0].font_size, FontSize::Small);
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.items[0].price, 45.50);
         assert_eq!(payload.items[0].qty, 2.0);
@@ -1624,6 +1763,23 @@ mod tests {
         assert_eq!(payload.iva, Some(14.56));
         assert_eq!(payload.total, 105.56);
         assert_eq!(payload.text_lines_after_items.len(), 1);
+        assert_eq!(payload.text_lines_after_items[0].font_size, FontSize::Big);
         assert!(payload.barcode.is_some());
+    }
+
+    #[test]
+    fn test_multiline_item_wrapping() {
+        let p = PaperSize::Size80mm;
+        let lines = p.format_table_item_lines(
+            "Café Americano hola si como no asoi que sea muy largo para probar",
+            "$50.00",
+            "2.00",
+            "$100.00",
+        );
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].chars().count(), 64);
+        assert_eq!(lines[1].chars().count(), 64);
+        assert!(lines[0].ends_with("$100.00"));
     }
 }
